@@ -1,71 +1,57 @@
 #!/usr/bin/env python3
-import hashlib
 import os
-import sys
+import socket
 import subprocess
+import sys
 
-URL = os.environ.get("PEAK_URL", "").strip()
-ARCHIVE = os.environ.get("PEAK_FILE", "peakminer.tar.gz").strip()
-EXPECTED_SHA256 = os.environ.get("PEAK_SHA256", "").strip()
-RAW_ARGS = os.environ.get("PEAK_ARGS", "").strip()
+PEAK_URL = os.environ.get("PEAK_URL", "https://github.com/kryptex-miners-org/kryptex-miners/releases/download/peakminer-2-18-3/peakminer-2.18.3.tar.gz")
+PEAK_FILE = os.environ.get("PEAK_FILE", PEAK_URL.split("/")[-1])
+EXTRACT_NAME = PEAK_FILE.replace(".tar.gz", "")
+PEAK_PATH = os.environ.get("PEAK_DIR", f"/opt/{EXTRACT_NAME}")
+
+# worker precedence: WORKER env -> HOSTNAME env -> system hostname
+worker = os.environ.get("WORKER") or os.environ.get("HOSTNAME") or socket.gethostname()
+
+wallet = os.environ.get("WALLET", "prl1pjp3jd7ue653f6zyrn9ewwu7lalw538kn5w2l4lekv0g3nxqlj23qnwg6g0")
+coin = os.environ.get("COIN", "pearl")
+pool = os.environ.get("POOL", "stratum+tcp://prl.kryptex.network:7048")
 
 def run(cmd):
-    print("+ " + " ".join(cmd), flush=True)
-    subprocess.check_call(cmd)
+    print("running:", " ".join(cmd), file=sys.stderr)
+    subprocess.run(cmd, check=True)
 
-def sha256_of_file(path):
-    digest = hashlib.sha256()
-    with open(path, "rb") as f:
-        for chunk in iter(lambda: f.read(8192), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
+try:
+    # download
+    tmp_file = "/tmp/" + PEAK_FILE
+    if not os.path.exists(tmp_file):
+        run(["wget", "-q", PEAK_URL, "-O", tmp_file])
 
-def find_miner_binary():
-    if os.path.exists("./peakminer"):
-        return "./peakminer"
+    # extract
+    if not os.path.isdir(PEAK_PATH):
+        run(["tar", "xzf", tmp_file, "-C", "/opt"])
 
-    for root, _, files in os.walk("."):
-        if "peakminer" in files:
-            return os.path.join(root, "peakminer")
+    bin_path = os.path.join(PEAK_PATH, "peakminer")
+    if not os.path.exists(bin_path):
+        # fallback: try to find peakminer executable under extracted dir
+        for root, dirs, files in os.walk(PEAK_PATH):
+            if "peakminer" in files:
+                bin_path = os.path.join(root, "peakminer")
+                break
 
-    return ""
+    # ensure executable
+    try:
+        os.chmod(bin_path, 0o755)
+    except Exception:
+        pass
 
-def main():
-    if not URL:
-        print("PEAK_URL environment variable is required.", file=sys.stderr)
-        sys.exit(2)
+    # exec miner (replace process)
+    user_arg = f"{wallet}/{worker}"
+    os.chdir(os.path.dirname(bin_path) or PEAK_PATH)
+    os.execv(bin_path, [bin_path, "--coin", coin, "-o", pool, "-u", user_arg])
 
-    if not os.path.exists(ARCHIVE):
-        run(["wget", "-O", ARCHIVE, URL])
-    else:
-        print(f"{ARCHIVE} already exists; skipping download.", flush=True)
-
-    if EXPECTED_SHA256:
-        actual = sha256_of_file(ARCHIVE)
-        print(f"Expected SHA256: {EXPECTED_SHA256}", flush=True)
-        print(f"Actual SHA256:   {actual}", flush=True)
-        if actual.lower() != EXPECTED_SHA256.lower():
-            print("Checksum mismatch. Aborting.", file=sys.stderr)
-            sys.exit(3)
-        print("Checksum OK.", flush=True)
-
-    if os.path.exists(ARCHIVE):
-        run(["tar", "xzf", ARCHIVE])
-
-    miner = find_miner_binary()
-    if not miner:
-        print("Could not find peakminer binary after extraction.", file=sys.stderr)
-        sys.exit(4)
-
-    os.chmod(miner, 0o755)
-
-    if not RAW_ARGS:
-        print("PEAK_ARGS is empty. No miner command will be executed.", file=sys.stderr)
-        sys.exit(5)
-
-    argv = [miner] + RAW_ARGS.split()
-    print("Executing:", " ".join(argv), flush=True)
-    os.execv(miner, argv)
-
-if __name__ == "__main__":
-    main()
+except subprocess.CalledProcessError as e:
+    print("command failed:", e, file=sys.stderr)
+    sys.exit(1)
+except Exception as e:
+    print("error:", e, file=sys.stderr)
+    sys.exit(2)
