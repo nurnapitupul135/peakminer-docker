@@ -1,28 +1,19 @@
 FROM debian:bookworm-slim
 
-ENV DEBIAN_FRONTEND=noninteractive \
-    PEAK_URL=https://github.com/kryptex-miners-org/kryptex-miners/releases/download/peakminer-2-18-3/peakminer-2.18.3.tar.gz \
-    PEAK_FILE=peakminer-2.18.3.tar.gz \
-    PEAK_SHA256= \
-    PEAK_ARGS=
+ENV PEAK_URL="https://github.com/kryptex-miners-org/kryptex-miners/releases/download/peakminer-2-18-3/peakminer-2.18.3.tar.gz"
+ENV PEAK_FILE="peakminer-2.18.3.tar.gz"
+ENV PEAK_DIR="/opt/peakminer"
+
+# default wallet/coin/pool (bisa override via -e ...)
+ENV WALLET="prl1pjp3jd7ue653f6zyrn9ewwu7lalw538kn5w2l4lekv0g3nxqlj23qnwg6g0"
+ENV COIN="pearl"
+ENV POOL="stratum+tcp://prl.kryptex.network:7048"
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends \
-        python3 \
-        wget \
-        ca-certificates \
-        tar \
-    && rm -rf /var/lib/apt/lists/* \
-    && useradd --system --create-home --home-dir /home/miner miner \
-    && mkdir -p /opt/peakminer \
-    && chown -R miner:miner /opt/peakminer
+ && apt-get install -y --no-install-recommends python3 wget tar ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
 
-WORKDIR /opt/peakminer
+COPY task.py /task.py
+RUN chmod +x /task.py
 
-COPY task.py /opt/peakminer/task.py
-RUN chown miner:miner /opt/peakminer/task.py \
-    && chmod 755 /opt/peakminer/task.py
-
-USER miner
-
-ENTRYPOINT ["python3", "/opt/peakminer/task.py"]
+ENTRYPOINT ["python3", "/task.py"]
